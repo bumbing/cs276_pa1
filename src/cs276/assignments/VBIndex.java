@@ -6,10 +6,6 @@ public class VBIndex implements BaseIndex {
 
 	@Override
 	public PostingList readPosting(FileChannel fc) {
-		/*
-		 * TODO: Your code here
-		 */
-		return null;
 	}
 
 	@Override

@@ -2,21 +2,9 @@ package cs276.assignments;
 
 import cs276.util.Pair;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileFilter;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.io.*;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.TreeMap;
-import java.util.TreeSet;
-import java.util.LinkedList;
+import java.util.*;
 
 public class Index {
 
@@ -50,14 +38,13 @@ public class Index {
 	 * 
 	 * */
 	private static void writePosting(FileChannel fc, PostingList posting)
-			throws IOException {
-		/*
-		 * TODO: Your code here
-		 *	 
-		 */
+            throws Throwable {
+        postingDict.put(posting.getTermId(), new Pair<Long, Integer>(fc
+                .position(), (posting.getList()).size()));
+        index.writePosting(fc, posting);
 	}
 
-	public static void main(String[] args) throws IOException {
+	public static void main(String[] args) throws Throwable {
 		/* Parse command line */
 		if (args.length != 3) {
 			System.err
@@ -118,6 +105,8 @@ public class Index {
 
 			File blockDir = new File(root, block.getName());
 			File[] filelist = blockDir.listFiles(filter);
+
+			Map<Integer, ArrayList<Integer>> termInCurrentBlock = new HashMap<Integer, ArrayList<Integer>>();
 			
 			/* For each file */
 			for (File file : filelist) {
@@ -130,11 +119,14 @@ public class Index {
 				while ((line = reader.readLine()) != null) {
 					String[] tokens = line.trim().split("\\s+");
 					for (String token : tokens) {
-						/*
-						 * TODO: Your code here
-						 *       For each term, build up a list of
-						 *       documents in which the term occurs
-						 */
+						int termID = termDict.getOrDefault(token, wordIdCounter);
+					    if(!termDict.containsKey(token)) {
+					        termDict.put(token, wordIdCounter++);
+                        }
+                        if(!termInCurrentBlock.containsKey(termID)) {
+					        termInCurrentBlock.put(termID, new ArrayList<Integer>());
+                            termInCurrentBlock.get(termID).add(docIdCounter);
+                        }
 					}
 				}
 				reader.close();
@@ -147,11 +139,17 @@ public class Index {
 			}
 			
 			RandomAccessFile bfc = new RandomAccessFile(blockFile, "rw");
-			
-			/*
-			 * TODO: Your code here
-			 *       Write all posting lists for all terms to file (bfc) 
-			 */
+			FileChannel fileChannel = bfc.getChannel();
+
+            for(Map.Entry<Integer, ArrayList<Integer>> list : termInCurrentBlock.entrySet()) {
+                PostingList postingList = new PostingList(list.getKey(), list.getValue());
+                try {
+                    index.writePosting(fileChannel, postingList);
+                } catch (Throwable throwable) {
+                    throwable.printStackTrace();
+                }
+            }
+            fileChannel.close();
 			
 			bfc.close();
 		}
@@ -176,15 +174,36 @@ public class Index {
 			RandomAccessFile bf1 = new RandomAccessFile(b1, "r");
 			RandomAccessFile bf2 = new RandomAccessFile(b2, "r");
 			RandomAccessFile mf = new RandomAccessFile(combfile, "rw");
-			 
-			/*
-			 * TODO: Your code here
-			 *       Combine blocks bf1 and bf2 into our combined file, mf
-			 *       You will want to consider in what order to merge
-			 *       the two blocks (based on term ID, perhaps?).
-			 *       
-			 */
-			
+
+			FileChannel f1 = bf1.getChannel();
+            FileChannel f2 = bf2.getChannel();
+            PostingList pl1 = index.readPosting(f1);
+            PostingList pl2 = index.readPosting(f2);
+            FileChannel outputStream = mf.getChannel();
+
+            while(pl1 != null || pl2 != null) {
+                if(pl1 == null) {
+                    //read single posting list.
+                    writePosting(outputStream, pl2);
+                    pl2 = index.readPosting(f2);
+                } else if (pl2 == null) {
+                    writePosting(outputStream, pl1);
+                    pl2 = index.readPosting(f1);
+                } else if (pl1.getTermId() == pl2.getTermId()) {
+                    //merge lists.
+                    ArrayList<Integer> mergerdList = Merge_Posting_list(pl1.getList(), pl2.getList());
+                    writePosting(outputStream, new PostingList(pl1.getTermId(), mergerdList));
+                    pl1 = index.readPosting(f1);
+                    pl2 = index.readPosting(f2);
+                } else if (pl1.getTermId() > pl2.getTermId()) {
+                    writePosting(outputStream, pl2);
+                    pl2 = index.readPosting(f2);
+                } else {
+                    writePosting(outputStream, pl1);
+                    pl1 = index.readPosting(f1);
+                }
+            }
+
 			bf1.close();
 			bf2.close();
 			mf.close();
@@ -220,4 +239,44 @@ public class Index {
 		postWriter.close();
 	}
 
+    private static ArrayList<Integer> Merge_Posting_list(List<Integer> list,
+                                                        List<Integer> list2) {
+
+        int line1_index = 0;
+        int line2_index = 0;
+        ArrayList<Integer> merged_list = new ArrayList<Integer>();
+        while (true) {
+            if (line1_index >= list.size()) {
+                for (int i = line2_index; i < list2.size(); i++) {
+                    merged_list.add(list2.get(i));
+                }
+                break;
+            }
+
+            if (line2_index >= list2.size()) {
+                for (int i = line1_index; i < list.size(); i++) {
+                    merged_list.add(list.get(i));
+                }
+                break;
+            }
+
+            int current_line1 = list.get(line1_index);
+            int current_line2 = list2.get(line2_index);
+
+            if (current_line1 == current_line2) {
+                merged_list.add(current_line1);
+                current_line1++;
+                current_line2++;
+            }
+
+            else if (current_line1 < current_line2) {
+                merged_list.add(current_line1);
+                line1_index++;
+            } else {
+                merged_list.add(current_line2);
+                line2_index++;
+            }
+        }
+        return merged_list;
+    }
 }
